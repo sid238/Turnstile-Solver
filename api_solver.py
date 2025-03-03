@@ -1,5 +1,4 @@
 import os
-import sys
 import time
 import json
 import uuid
@@ -74,6 +73,8 @@ class TurnstileAPIServer:
         self.useragent = useragent
         self.thread_count = thread
         self.browser_pool = asyncio.Queue()
+        self.pages_per_browser = 10  # Number of pages per browser instance
+        self.page_pool = asyncio.Queue()
         self.browser_args = [
             "--disable-blink-features=AutomationControlled",
             "--no-sandbox",
@@ -126,20 +127,19 @@ class TurnstileAPIServer:
             raise
 
     async def _initialize_browser(self) -> None:
-        """Initialize the browser and create the page pool."""
+        """Initialize browsers with multiple pages per instance."""
         if self.browser_type == "chromium" or self.browser_type == "chrome" or self.browser_type == "msedge":
             playwright = await async_playwright().start()
         elif self.browser_type == "camoufox":
             camoufox = AsyncCamoufox(headless=self.headless)
 
-        for i in range(self.thread_count):
+        page_counter = 0
+        for browser_idx in range(self.thread_count):
             if self.browser_type == "chromium":
                 browser = await playwright.chromium.launch(
                     headless=self.headless,
                     args=self.browser_args
                 )
-                page = await browser.new_page()
-
             elif self.browser_type == "chrome":
                 browser = await playwright.chromium.launch_persistent_context(
                     user_data_dir=f"{os.getcwd()}/tmp/turnstile-chrome-{''.join(random.choices(string.ascii_letters + string.digits, k=10))}",
@@ -147,8 +147,6 @@ class TurnstileAPIServer:
                     headless=self.headless,
                     no_viewport=True,
                 )
-                page = browser.pages[0]
-                
             elif self.browser_type == "msedge":
                 browser = await playwright.chromium.launch_persistent_context(
                     user_data_dir=f"{os.getcwd()}/tmp/turnstile-edge-{''.join(random.choices(string.ascii_letters + string.digits, k=10))}",
@@ -156,97 +154,108 @@ class TurnstileAPIServer:
                     headless=self.headless,
                     no_viewport=True,
                 )
-                page = browser.pages[0]
-
             elif self.browser_type == "camoufox":
                 browser = await camoufox.start()
-                page = await browser.new_page()
 
-            await self.browser_pool.put((i+1, browser, page))
+            # Create multiple pages per browser
+            for page_idx in range(self.pages_per_browser):
+                page_counter += 1
+                if self.browser_type in ["chrome", "msedge"] and page_idx == 0:
+                    page = browser.pages[0]
+                else:
+                    page = await browser.new_page()
+                
+                await self.page_pool.put({
+                    'id': page_counter,
+                    'browser': browser,
+                    'page': page,
+                    'in_use': False
+                })
 
             if self.debug:
-                log.success(f"Browser {i + 1} initialized successfully")
+                log.success(f"Browser {browser_idx + 1} initialized with {self.pages_per_browser} pages")
 
-        log.success(f"Browser pool initialized with {self.browser_pool.qsize()} browsers")
+        log.success(f"Page pool initialized with {self.page_pool.qsize()} total pages")
+
+    async def _cleanup_page(self, page_data: dict) -> None:
+        """Clean up a page after use."""
+        try:
+            page = page_data['page']
+            await page.goto("about:blank")
+            await page.evaluate("""() => {
+                try {
+                    window.localStorage.clear();
+                    window.sessionStorage.clear();
+                } catch (e) {}
+            }""")
+        except Exception as e:
+            if self.debug:
+                log.warning(f"Error during page cleanup: {str(e)}")
 
     async def _solve_turnstile(self, task_id: str, url: str, sitekey: str, action: str = None, cdata: str = None, invisible: bool = False):
-        """Solve the Turnstile challenge."""
-        index, browser, page = await self.browser_pool.get()
+        """Solve the Turnstile challenge using the page pool."""
+        page_data = await self.page_pool.get()
         start_time = time.time()
 
         try:
             if self.debug:
-                log.debug(f"Browser {index}: Starting Turnstile solve for URL: {url} with Sitekey: {sitekey}")
-                log.debug(f"Browser {index}: Setting up page data and route")
+                log.debug(f"Page {page_data['id']}: Starting Turnstile solve for URL: {url}")
 
             url_with_slash = url + "/" if not url.endswith("/") else url
             turnstile_div = f'<div class="cf-turnstile" data-sitekey="{sitekey}"' + (f' data-action="{action}"' if action else '') + (f' data-cdata="{cdata}"' if cdata else '') + '></div>'
-            page_data = self.HTML_TEMPLATE.replace("<!-- cf turnstile -->", turnstile_div)
+            page_data['page_data'] = self.HTML_TEMPLATE.replace("<!-- cf turnstile -->", turnstile_div)
 
-            await page.route(url_with_slash, lambda route: route.fulfill(body=page_data, status=200))
-            await page.goto(url_with_slash)
+            await page_data['page'].route(url_with_slash, lambda route: route.fulfill(body=page_data['page_data'], status=200))
+            await page_data['page'].goto(url_with_slash)
 
             if self.debug:
-                log.debug(f"Browser {index}: Starting Turnstile response retrieval loop")
+                log.debug(f"Page {page_data['id']}: Starting Turnstile response retrieval loop")
 
             for attempt in range(10):
                 try:
-                    turnstile_check = await page.eval_on_selector(
+                    turnstile_check = await page_data['page'].eval_on_selector(
                         "[name=cf-turnstile-response]",
                         "el => el.value"
                     )
                     
                     if turnstile_check == "":
                         if self.debug:
-                            log.debug(f"Browser {index}: Attempt {attempt+1} - No Turnstile response yet")
+                            log.debug(f"Page {page_data['id']}: Attempt {attempt+1} - No Turnstile response yet")
 
                         if not invisible:
-                            await page.evaluate("document.querySelector('.cf-turnstile').style.width = '70px'")
-                            await page.click(".cf-turnstile")
+                            await page_data['page'].evaluate("document.querySelector('.cf-turnstile').style.width = '70px'")
+                            await page_data['page'].click(".cf-turnstile")
                             
                         await asyncio.sleep(0.5)
                     else:
-                        element = await page.query_selector("[name=cf-turnstile-response]")
+                        element = await page_data['page'].query_selector("[name=cf-turnstile-response]")
                         if element:
                             value = await element.get_attribute("value")
                             elapsed_time = round(time.time() - start_time, 3)
 
-                            log.success(f"Browser {index}: Successfully solved captcha in {elapsed_time} seconds")
+                            log.success(f"Page {page_data['id']}: Successfully solved captcha in {elapsed_time} seconds")
 
                             self.results[task_id] = {"value": value, "elapsed_time": elapsed_time}
                             self._save_results()
                             break
                 except Exception as e:
-                    log.warning(f"Browser {index}: Error during attempt {attempt+1}: {str(e)}")
+                    log.warning(f"Page {page_data['id']}: Error during attempt {attempt+1}: {str(e)}")
                     await asyncio.sleep(0.5)
                     continue
 
             if self.results.get(task_id) == "CAPTCHA_NOT_READY":
                 elapsed_time = round(time.time() - start_time, 3)
                 self.results[task_id] = {"value": "CAPTCHA_FAIL", "elapsed_time": elapsed_time}
-                log.error(f"Browser {index}: Failed to solve Turnstile in {elapsed_time} seconds")
+                log.error(f"Page {page_data['id']}: Failed to solve Turnstile in {elapsed_time} seconds")
                 
         except Exception as e:
             elapsed_time = round(time.time() - start_time, 3)
             self.results[task_id] = {"value": "CAPTCHA_FAIL", "elapsed_time": elapsed_time}
-            log.error(f"Browser {index}: Error solving Turnstile: {str(e)}")
+            log.error(f"Page {page_data['id']}: Error solving Turnstile: {str(e)}")
             
         finally:
-            if self.debug:
-                log.debug(f"Browser {index}: Clearing page state")
-                
-            try:
-                await page.goto("about:blank")
-                await page.evaluate("""() => {
-                    try {
-                        window.localStorage.clear();
-                        window.sessionStorage.clear();
-                    } catch (e) {}
-                }""")
-            except:
-                pass
-                
-            await self.browser_pool.put((index, browser, page))
+            await self._cleanup_page(page_data)
+            await self.page_pool.put(page_data)
 
     async def process_turnstile(self):
         """Handle the /turnstile endpoint requests."""
@@ -352,6 +361,18 @@ class TurnstileAPIServer:
             </html>
         """
 
+    async def shutdown(self):
+        """Cleanup all browsers and pages."""
+        while not self.page_pool.empty():
+            try:
+                page_data = await self.page_pool.get()
+                await self._cleanup_page(page_data)
+                if hasattr(page_data['browser'], 'close'):
+                    await page_data['browser'].close()
+            except Exception as e:
+                if self.debug:
+                    log.warning(f"Error during shutdown cleanup: {str(e)}")
+
     def create_app(self):
         """Create and configure the application instance."""
         return self.app
@@ -402,7 +423,13 @@ if __name__ == "__main__":
         browser_type=args.browser_type,
         thread=args.thread
     )
-    app.run(host=args.host, port=args.port)
+    
+    try:
+        app.run(host=args.host, port=args.port)
+    finally:
+        # Ensure proper cleanup on shutdown
+        if hasattr(app, 'shutdown'):
+            asyncio.run(app.shutdown())
 
 # Credits for the changes: github.com/sexfrance
 # Credit for the original script: github.com/Theyka
