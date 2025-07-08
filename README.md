@@ -40,7 +40,7 @@ A Python-based solution for solving Cloudflare Turnstile challenges quickly (4-6
 
 - **Multi-Browser Support**:
   - Chromium (default) - Fast and reliable
-  - Chrome - For persistent sessions
+  - Edge - For persistent sessions
   - Camoufox - Enhanced anti-bot evasion
 - **Multiple Solving Modes**:
   - **Synchronous**: Simple direct API for basic use cases

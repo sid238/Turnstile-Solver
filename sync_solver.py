@@ -9,7 +9,10 @@ from patchright.sync_api import sync_playwright, Page, BrowserContext
 from camoufox.sync_api import Camoufox
 from logmagix import Loader
 from functools import wraps
-from .logger import log
+from logmagix import Logger
+
+log = Logger(github_repository="https://github.com/sexfrance/Turnstile-Solver")
+
 
 DEBUG = False
 
@@ -404,9 +407,8 @@ def get_turnstile_token(headless: bool = False, url: str = None, sitekey: str = 
 
 if __name__ == "__main__":
     result = get_turnstile_token(
-        url="https://streamlabs.com/discord/nitro",
-        sitekey="0x4AAAAAAACELUBpqiwktdQ9",
-        invisible=True,
+        url="https://onlyfans.com",
+        sitekey="0x4AAAAAAAxTpmbMvo7Qj6zy",
         browser_type="chromium",
         debug=True
     )

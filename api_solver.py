@@ -15,7 +15,10 @@ from camoufox.async_api import AsyncCamoufox
 from logmagix import Loader
 from collections import deque
 from functools import wraps
-from .logger import log
+from logmagix import Logger
+
+log = Logger(github_repository="https://github.com/sexfrance/Turnstile-Solver")
+
 
 DEBUG = False
 
@@ -83,7 +86,6 @@ class TurnstileAPIServer:
             "--disable-background-timer-throttling",
             "--disable-backgrounding-occluded-windows",
             "--disable-renderer-backgrounding",
-            "--window-position=2000,2000",
         ]
         
         if useragent:

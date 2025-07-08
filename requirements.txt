@@ -1,4 +1,5 @@
-logmagix
-patchright
-quart
-hypercorn
+camoufox==0.4.11
+hypercorn==0.17.3
+logmagix==2.1.2.9
+patchright==1.48.0.post0
+quart==0.20.0
