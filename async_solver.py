@@ -8,9 +8,10 @@ from typing import Dict, Optional
 from dataclasses import dataclass
 from patchright.async_api import async_playwright, Page, BrowserContext
 from camoufox.async_api import AsyncCamoufox
-from logmagix import Loader
+from logmagix import Loader, Logger
 from functools import wraps
-from .logger import log
+
+log = Logger(github_repository="https://github.com/sexfrance/Turnstile-Solver")
 
 DEBUG = False
 

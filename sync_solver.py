@@ -7,12 +7,10 @@ from typing import Dict, Optional
 from dataclasses import dataclass
 from patchright.sync_api import sync_playwright, Page, BrowserContext
 from camoufox.sync_api import Camoufox
-from logmagix import Loader
+from logmagix import Loader, Logger
 from functools import wraps
-from logmagix import Logger
 
 log = Logger(github_repository="https://github.com/sexfrance/Turnstile-Solver")
-
 
 DEBUG = False
 
