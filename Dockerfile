@@ -39,6 +39,6 @@ RUN pip3 install --no-cache-dir --user -r requirements.txt
 RUN python3 -m patchright install chromium --with-deps \
     || python3 -m playwright install chromium
 
-EXPOSE 7860
+EXPOSE 5000
 
-CMD ["python3", "main.py", "--host", "0.0.0.0", "--port", "7860"]
+CMD ["python3", "main.py", "--host", "0.0.0.0", "--port", "5000"]

@@ -118,7 +118,7 @@ class TurnstileTester:
             app = create_app(debug=debug, headless=headless, useragent=useragent, browser_type=browser_type, thread=thread)
             import hypercorn.asyncio
             config = hypercorn.Config()
-            config.bind = ["127.0.0.1:5000"]
+            config.bind = ["0.0.0.0:5000"]
             await hypercorn.asyncio.serve(app, config)
         except Exception as e:
             logger.error(f"API server failed to start: {str(e)}")
